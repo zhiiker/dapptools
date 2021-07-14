@@ -1,6 +1,9 @@
 { pkgs }:
 
 let
+  solc-0_7_6 = "${pkgs.solc-static-versions.solc_0_7_6}/bin/solc-0.7.6";
+  solc-0_6_7 = "${pkgs.solc-static-versions.solc_0_6_7}/bin/solc-0.6.7";
+
   ds-test-src = pkgs.fetchFromGitHub {
     owner = "dapphub";
     repo = "ds-test";
@@ -72,6 +75,7 @@ let
   };
 
   ds-auth = pkgs.buildDappPackage {
+    solc = solc-0_7_6;
     src = ds-auth-src;
     name = "ds-auth";
     doCheck = false;
@@ -79,6 +83,7 @@ let
   };
 
   ds-token = pkgs.buildDappPackage {
+    solc = solc-0_7_6;
     src = ds-token-src;
     name = "ds-token";
     doCheck = false;
@@ -86,6 +91,7 @@ let
   };
 
   ds-note = pkgs.buildDappPackage {
+    solc = solc-0_6_7;
     src = ds-note-src;
     name = "ds-note";
     doCheck = false;
@@ -93,6 +99,7 @@ let
   };
 
   ds-thing = pkgs.buildDappPackage {
+    solc = solc-0_6_7;
     src = ds-thing-src;
     name = "ds-thing";
     doCheck = false;
@@ -100,6 +107,7 @@ let
   };
 
   ds-value = pkgs.buildDappPackage {
+    solc = solc-0_6_7;
     src = ds-value-src;
     name = "ds-value";
     doCheck = false;
@@ -107,8 +115,8 @@ let
   };
 
   runTest = { dir, shouldFail, name, dappFlags?"" }: pkgs.buildDappPackage {
-    name = name;
-    shouldFail = shouldFail;
+    inherit name shouldFail;
+    solc=solc-0_6_7;
     src = dir;
     dappFlags = "${dappFlags}";
     deps = [ ds-test ds-token ds-math ];
@@ -120,7 +128,7 @@ in
       dir = ./pass;
       name = "dappTestsShouldPass";
       shouldFail = false;
-      dappFlags = "--max-iterations 50";
+      dappFlags = "--max-iterations 50 --smttimeout 600000 --ffi";
     };
 
     shouldFail = let
@@ -128,7 +136,7 @@ in
         dir = ./fail;
         shouldFail = true;
         name = "dappTestsShouldFail-${match}";
-        dappFlags = "--match ${match}";
+        dappFlags = "--match ${match} --smttimeout 600000";
       };
     in pkgs.recurseIntoAttrs {
       prove-add = fail "prove_add";
@@ -138,9 +146,13 @@ in
       prove-mul = fail "prove_mul";
       prove-distributivity = fail "prove_distributivity";
       prove-transfer = fail "prove_transfer";
+      try-ffi = fail "testBadFFI";
+      invariant-first = fail "invariantFirst";
+      invariant-test-usr-bal = fail "invariantTestUserBal";
     };
 
     dss = pkgs.buildDappPackage {
+      solc = solc-0_6_7;
       src = dss-src;
       name = "dss";
       dappFlags = "--match '[^dai].t.sol'";

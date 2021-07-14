@@ -1,11 +1,26 @@
 # hevm changelog
 
-## unreleased
+## Unreleased
 
-### Added
+### Changed
 
-- Can now identify contracts with `immutable` by comparing bytecode modulo immutableReferences.
+- The configuration variable `DAPP_TEST_BALANCE_CREATE` has been renamed to `DAPP_TEST_BALANCE`
+
+## 0.47.0 - 2021-07-01
+
 - A new test runner for checking invariants against random reachable contract states.
+- `hevm symbolic` can search for solc 0.8 style assertion violations, and a new `--assertions` flag
+    has been added allowing users to customize which assertions should be reported
+- A new cheatcode `ffi(string[])` that executes an arbitrary command in the system shell
+
+### Changed
+
+- Z3 is once again the default smt solver
+- Updated nixpkgs to the `21.05` channel
+
+### Fixed
+
+- Sourcemaps for contracts containing `immutable` are now shown in the debug view.
 
 ## 0.46.0 - 2021-04-29
 

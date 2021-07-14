@@ -2,6 +2,8 @@
 
 {-# Language CPP #-}
 {-# Language DataKinds #-}
+{-# Language StandaloneDeriving #-}
+{-# Language DeriveAnyClass #-}
 {-# Language FlexibleInstances #-}
 {-# Language DeriveGeneric #-}
 {-# Language GADTs #-}
@@ -60,6 +62,7 @@ import Data.Text.Encoding         (encodeUtf8)
 import Data.Text.IO               (hPutStr)
 import Data.Maybe                 (fromMaybe, fromJust)
 import Data.Version               (showVersion)
+import Data.DoubleWord            (Word256)
 import Data.SBV hiding (Word, solver, verbose, name)
 import Data.SBV.Control hiding (Version, timeout, create)
 import System.IO                  (hFlush, stdout, stderr)
@@ -126,6 +129,7 @@ data Command w
       , maxIterations :: w ::: Maybe Integer      <?> "Number of times we may revisit a particular branching point"
       , solver        :: w ::: Maybe Text         <?> "Used SMT solver: z3 (default) or cvc4"
       , smtdebug      :: w ::: Bool               <?> "Print smt queries sent to the solver"
+      , assertions    :: w ::: Maybe [Word256]    <?> "Comma seperated list of solc panic codes to check for (default: everything except arithmetic overflow)"
       }
   | Equivalence -- prove equivalence between two programs
       { codeA         :: w ::: ByteString    <?> "Bytecode of the first program"
@@ -183,6 +187,7 @@ data Command w
       , maxIterations :: w ::: Maybe Integer            <?> "Number of times we may revisit a particular branching point"
       , solver        :: w ::: Maybe Text               <?> "Used SMT solver: z3 (default) or cvc4"
       , smtdebug      :: w ::: Bool                     <?> "Print smt queries sent to the solver"
+      , ffi           :: w ::: Bool                     <?> "Allow the usage of the hevm.ffi() cheatcode (WARNING: this allows test authors to execute arbitrary code on your machine)"
       }
   | BcTest -- Run an Ethereum Blockhain/GeneralState test
       { file      :: w ::: String    <?> "Path to .json test file"
@@ -229,6 +234,9 @@ type URL = Text
 -- For some reason haskell can't derive a
 -- parseField instance for (Text, ByteString)
 instance Options.ParseField (Text, ByteString)
+
+deriving instance Options.ParseField Word256
+deriving instance Options.ParseField [Word256]
 
 instance Options.ParseRecord (Command Options.Wrapped) where
   parseRecord =
@@ -293,6 +301,7 @@ unitTestOptions cmd testFile = do
     , EVM.UnitTest.vmModifier = vmModifier
     , EVM.UnitTest.testParams = params
     , EVM.UnitTest.dapp = srcInfo
+    , EVM.UnitTest.allowFFI = ffi cmd
     }
 
 main :: IO ()
@@ -427,7 +436,7 @@ runSMTWithTimeOut :: Maybe Text -> Maybe Integer -> Bool -> Symbolic a -> IO a
 runSMTWithTimeOut solver maybeTimeout smtdebug symb
   | solver == Just "cvc4" = runwithcvc4
   | solver == Just "z3" = runwithz3
-  | solver == Nothing = runwithcvc4
+  | solver == Nothing = runwithz3
   | otherwise = error "Unknown solver. Currently supported solvers; z3, cvc4"
  where timeout = fromMaybe 30000 maybeTimeout
        runwithz3 = runSMTWith z3{SBV.verbose=smtdebug} $ (setTimeOut timeout) >> symb
@@ -505,7 +514,8 @@ assert cmd = do
   else
     runSMTWithTimeOut (solver cmd) (smttimeout cmd) (smtdebug cmd) $ query $ do
       preState <- symvmFromCommand cmd
-      verify preState (maxIterations cmd) rpcinfo (Just checkAssertions) >>= \case
+      let errCodes = fromMaybe defaultPanicCodes (assertions cmd)
+      verify preState (maxIterations cmd) rpcinfo (Just $ checkAssertions errCodes) >>= \case
         Right tree -> do
           io $ putStrLn "Assertion violation found."
           showCounterexample preState maybesig
@@ -759,7 +769,8 @@ vmFromCommand cmd = do
           , EVM.vmoptChainId       = word chainid 1
           , EVM.vmoptCreate        = create cmd
           , EVM.vmoptStorageModel  = ConcreteS
-          , EVM.vmoptTxAccessList  = mempty -- TODO: support me soon        
+          , EVM.vmoptTxAccessList  = mempty -- TODO: support me soon
+          , EVM.vmoptAllowFFI      = False
           }
         word f def = fromMaybe def (f cmd)
         addr f def = fromMaybe def (f cmd)
@@ -771,7 +782,7 @@ symvmFromCommand cmd = do
   (miner,blockNum,diff) <- case rpc cmd of
     Nothing -> return (0,0,0)
     Just url -> io $ EVM.Fetch.fetchBlockFrom block' url >>= \case
-      Nothing -> error $ "Could not fetch block"
+      Nothing -> error "Could not fetch block"
       Just EVM.Block{..} -> return (_coinbase
                                    , wordValue _number
                                    , wordValue _difficulty
@@ -829,7 +840,7 @@ symvmFromCommand cmd = do
                         & set EVM.external    (view EVM.external contract')
 
     (_, _, Just c)  ->
-      return $ (EVM.initialContract . codeType $ decipher c)
+      return (EVM.initialContract . codeType $ decipher c)
     (_, _, Nothing) ->
       error "must provide at least (rpc + address) or code"
 
@@ -866,6 +877,7 @@ symvmFromCommand cmd = do
       , EVM.vmoptCreate        = create cmd
       , EVM.vmoptStorageModel  = fromMaybe SymbolicS (storageModel cmd)
       , EVM.vmoptTxAccessList  = mempty
+      , EVM.vmoptAllowFFI      = False
       }
     word f def = fromMaybe def (f cmd)
     addr f def = fromMaybe def (f cmd)
